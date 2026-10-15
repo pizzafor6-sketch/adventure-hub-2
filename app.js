@@ -14,10 +14,20 @@
   const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>'$'+Number(n||0).toLocaleString('en-US');
   function persist(){ try {localStorage.setItem(KEY,JSON.stringify(state));return true;} catch(e){alert('Could not save. Please check browser storage settings.');return false;} }
+  function backupData(){
+    const backup={format:'adventure-hub-2-backup',version:1,createdAt:new Date().toISOString(),data:state};
+    const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;link.download='adventure-hub-backup-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }
+  function backupControls(){return '<div class="panel"><h2>Back up your Adventure Hub</h2><p>Download a copy of your vehicles, deals, and points. Store it somewhere safe, such as iCloud Drive.</p><button type="button" class="primary" id="backup-data">Download backup</button> <button type="button" id="restore-data">Restore from backup</button><input type="file" id="backup-file" accept=".json,application/json" hidden><p class="muted">This backup contains records saved in this browser only. Restoring replaces the records on this device after confirmation.</p></div>';}
   function nav(next){page=next;editing=null;document.querySelectorAll('[data-page]').forEach(b=>{b.classList.toggle('active',b.dataset.page===page);b.setAttribute('aria-current',b.dataset.page===page?'page':'false');});render();}
   function render(){
     if(page==='home'){
-      root.innerHTML='<h1>Your adventures, organized.</h1><p>Choose a section to manage your vehicles, potential deals, or rewards balances.</p><div class="grid">'+Object.keys(labels).map(k=>'<article class="card"><h3>'+labels[k]+'</h3><div class="amount">'+state[k].length+' saved</div><button type="button" class="primary" data-go="'+k+'">Open '+labels[k]+'</button></article>').join('')+'</div>';
+      root.innerHTML='<h1>Your adventures, organized.</h1><p>Choose a section to manage your vehicles, potential deals, or rewards balances.</p><div class="grid">'+Object.keys(labels).map(k=>'<article class="card"><h3>'+labels[k]+'</h3><div class="amount">'+state[k].length+' saved</div><button type="button" class="primary" data-go="'+k+'">Open '+labels[k]+'</button></article>').join('')+'</div>'+backupControls();
       return;
     }
     const list=state[page];
@@ -33,6 +43,8 @@
   }
   document.addEventListener('click',e=>{
     const go=e.target.closest('[data-page],[data-go]');if(go){nav(go.dataset.page||go.dataset.go);return;}
+    if(e.target.closest('#backup-data')){backupData();return;}
+    if(e.target.closest('#restore-data')){document.getElementById('backup-file').click();return;}
     if(e.target.closest('#add')){showEditor('new');return;}
     if(e.target.closest('#import-vehicles')){document.getElementById('vehicle-file').click();return;}
     if(e.target.closest('#cancel')){editing=null;render();return;}
@@ -40,6 +52,21 @@
     const del=e.target.closest('[data-delete]');if(del){const id=Number(del.dataset.delete);if(confirm('Delete this record?')){state[page]=state[page].filter(x=>x.id!==id);persist();render();}return;}
   });
   document.addEventListener('change', async e=>{
+    if(e.target.id==='backup-file'){
+      const file=e.target.files&&e.target.files[0];if(!file)return;
+      try {
+        const parsed=JSON.parse(await file.text());
+        if(parsed.format!=='adventure-hub-2-backup'||parsed.version!==1||!parsed.data||!['vehicles','deals','rewards'].every(k=>Array.isArray(parsed.data[k])&&parsed.data[k].every(v=>v&&typeof v.name==='string'&&Number.isFinite(v.id))))throw new Error('This is not a valid Adventure Hub 2.0 backup.');
+        if(!confirm('Restore this backup? This will REPLACE the records currently saved on this device. Choose Cancel to keep them.'))return;
+        const previous=JSON.stringify(state);
+        try {localStorage.setItem(KEY+'-before-restore-'+Date.now(),previous);}catch(err){throw new Error('Could not create a safety copy; restore cancelled.');}
+        state={vehicles:parsed.data.vehicles,deals:parsed.data.deals,rewards:parsed.data.rewards};
+        if(!persist()){state=JSON.parse(previous);return;}
+        editing=null;nav('home');alert('Backup restored successfully.');
+      } catch(err){alert('Could not restore: '+err.message);}
+      finally{e.target.value='';}
+      return;
+    }
     if(e.target.id!=='vehicle-file')return;
     const file=e.target.files&&e.target.files[0]; if(!file)return;
     try {
