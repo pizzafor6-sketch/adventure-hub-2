@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const KEY = 'adventure-hub-2-preview-v1';
+  const KEY = 'adventure-hub-2-preview-v1'; // Keep existing saved records
   const labels = { vehicles:'Cruiser Garage', deals:'Deal Hunter', rewards:'Points Explorer' };
   const fields = {
     vehicles:[['name','Vehicle name','text'],['value','Estimated value ($)','number'],['notes','Notes','textarea']],
@@ -21,7 +21,7 @@
       return;
     }
     const list=state[page];
-    root.innerHTML='<h1>'+labels[page]+'</h1><p>Save and update your '+(page==='vehicles'?'Land Cruisers and other vehicles':page==='deals'?'potential purchases and trades':'travel points balances')+'.</p><button type="button" class="primary" id="add">+ Add '+(page==='vehicles'?'vehicle':page==='deals'?'deal':'program')+'</button><div id="editor"></div><div class="grid">'+(list.length?list.map(item=>'<article class="card"><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(page==='rewards'?Number(item.balance||0).toLocaleString('en-US')+' points':money(page==='vehicles'?item.value:item.price))+'</div><div class="muted">'+escapeHTML(item.notes||'No notes')+'</div><div class="actions"><button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>').join(''):'<div class="empty">Nothing saved yet. Use the Add button to create your first record.</div>')+'</div>';
+    root.innerHTML='<h1>'+labels[page]+'</h1><p>Save and update your '+(page==='vehicles'?'Land Cruisers and other vehicles':page==='deals'?'potential purchases and trades':'travel points balances')+'.</p><button type="button" class="primary" id="add">+ Add '+(page==='vehicles'?'vehicle':page==='deals'?'deal':'program')+'</button>'+(page==='vehicles'?'<button type="button" id="import-vehicles">Import vehicles from file</button><input type="file" id="vehicle-file" accept=".json,application/json" hidden>':'')+'<div id="editor"></div><div class="grid">'+(list.length?list.map(item=>'<article class="card"><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(page==='rewards'?Number(item.balance||0).toLocaleString('en-US')+' points':money(page==='vehicles'?item.value:item.price))+'</div><div class="muted">'+escapeHTML(item.notes||'No notes')+'</div><div class="actions"><button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>').join(''):'<div class="empty">Nothing saved yet. Use the Add button to create your first record.</div>')+'</div>';
     if(editing!==null) showEditor(editing);
   }
   function showEditor(id){
@@ -34,9 +34,31 @@
   document.addEventListener('click',e=>{
     const go=e.target.closest('[data-page],[data-go]');if(go){nav(go.dataset.page||go.dataset.go);return;}
     if(e.target.closest('#add')){showEditor('new');return;}
+    if(e.target.closest('#import-vehicles')){document.getElementById('vehicle-file').click();return;}
     if(e.target.closest('#cancel')){editing=null;render();return;}
     const edit=e.target.closest('[data-edit]');if(edit){showEditor(Number(edit.dataset.edit));return;}
     const del=e.target.closest('[data-delete]');if(del){const id=Number(del.dataset.delete);if(confirm('Delete this record?')){state[page]=state[page].filter(x=>x.id!==id);persist();render();}return;}
+  });
+  document.addEventListener('change', async e=>{
+    if(e.target.id!=='vehicle-file')return;
+    const file=e.target.files&&e.target.files[0]; if(!file)return;
+    try {
+      const parsed=JSON.parse(await file.text());
+      if(!Array.isArray(parsed.vehicles))throw new Error('This file does not contain a vehicles list.');
+      const incoming=parsed.vehicles.map(v=>({name:String(v.name||'').trim(),value:Number(v.value||0),notes:String(v.notes||'')}));
+      if(incoming.some(v=>!v.name||!Number.isFinite(v.value)))throw new Error('Some vehicle records are invalid.');
+      const existing=new Set(state.vehicles.map(v=>v.name.toLowerCase()));
+      const additions=incoming.filter(v=>!existing.has(v.name.toLowerCase()) && existing.add(v.name.toLowerCase()));
+      if(!additions.length){alert('No new vehicles to import. Existing vehicles were left unchanged.');return;}
+      if(!confirm('Add '+additions.length+' vehicle(s) to Cruiser Garage? Existing records will be kept.'))return;
+      const before=JSON.stringify(state);
+      localStorage.setItem(KEY+'-before-import-'+Date.now(),before);
+      const ids=new Set(state.vehicles.map(v=>v.id));
+      for(const v of additions){let id=Date.now()+Math.floor(Math.random()*1000000);while(ids.has(id))id++;ids.add(id);state.vehicles.push({id,...v});}
+      if(persist()){editing=null;render();alert('Imported '+additions.length+' vehicle(s).');}
+      else {state=JSON.parse(before);}
+    } catch(err){alert('Could not import: '+err.message);}
+    finally {e.target.value='';}
   });
   document.addEventListener('submit',e=>{
     if(e.target.id!=='record-form')return;
