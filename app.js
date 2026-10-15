@@ -4,15 +4,25 @@
   const labels = { vehicles:'Cruiser Garage', deals:'Deal Hunter', rewards:'Points Explorer' };
   const fields = {
     vehicles:[['name','Vehicle name','text'],['value','Estimated value ($)','number'],['notes','Notes','textarea']],
-    deals:[['name','Deal or trade','text'],['price','Asking price ($)','number'],['notes','Notes / link','textarea']],
+    deals:[['name','Listing title','text'],['category','Category','select:Welder|FJ60 trade|Vintage motorcycle|Land Cruiser|Other'],['kind','Opportunity','select:For sale|Trade|Both'],['price','Asking price ($; leave blank for trade)','number'],['estimatedValue','Estimated fair value ($; optional)','number'],['location','Location','text'],['url','Listing URL','url'],['status','Status','select:Watching|Contacted|Negotiating|Passed|Purchased'],['notes','Notes / seller details','textarea']],
     rewards:[['name','Program name','text'],['balance','Points balance','number'],['notes','Notes','textarea']]
   };
   let state = {vehicles:[],deals:[],rewards:[]};
   try { const saved = JSON.parse(localStorage.getItem(KEY)); if(saved && ['vehicles','deals','rewards'].every(k=>Array.isArray(saved[k]))) state=saved; } catch(err) { console.warn('Saved data could not be loaded',err); }
-  let page='home'; let editing=null;
+  let page='home'; let editing=null; let dealFilter='All';
   const root=document.getElementById('content');
   const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>'$'+Number(n||0).toLocaleString('en-US');
+  function safeUrl(value){try{const u=new URL(String(value||''));return ['https:','http:'].includes(u.protocol)?u.href:'';}catch{return '';}}
+  function dealCard(item){
+    const url=safeUrl(item.url);const price=Number(item.price||0);const fair=Number(item.estimatedValue||0);
+    const difference=price>0&&fair>0?'<p class="muted">Estimated difference: <strong>'+ (fair-price>=0?'+':'−')+money(Math.abs(fair-price))+'</strong> vs. your estimate</p>':'';
+    return '<article class="card"><div class="muted">'+escapeHTML(item.category||'Other')+' · '+escapeHTML(item.kind||'For sale')+' · '+escapeHTML(item.status||'Watching')+'</div><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(price?money(price):'Trade / price not set')+'</div>'+(item.location?'<p class="muted">📍 '+escapeHTML(item.location)+'</p>':'')+difference+'<p class="muted notes">'+escapeHTML(item.notes||'No notes')+'</p><div class="actions">'+(url?'<a class="link-button" href="'+escapeHTML(url)+'" target="_blank" rel="noopener noreferrer">Open listing ↗</a>':'')+'<button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>';
+  }
+  function dealSearches(){
+    const searches=[['Welders','Miller Lincoln MIG welder used sale Utah'],['FJ60 trades','trade for Toyota FJ60 Land Cruiser'],['Vintage motorcycles','vintage motorcycle for sale Utah'],['Land Cruisers','Toyota FJ40 for sale Utah']];
+    return '<div class="panel"><h2>Find listings online</h2><p>These buttons open searches in a new tab. Results are not imported automatically; save interesting listings with “Add deal.”</p><div class="actions">'+searches.map(([label,q])=>'<a class="link-button" target="_blank" rel="noopener noreferrer" href="https://www.google.com/search?q='+encodeURIComponent(q)+'">Search '+escapeHTML(label)+' ↗</a>').join('')+'</div><p class="muted">Automatic alerts can run separately through ChatGPT Tasks; this version does not sync those alerts into the app.</p></div>';
+  }
   function persist(){ try {localStorage.setItem(KEY,JSON.stringify(state));return true;} catch(e){alert('Could not save. Please check browser storage settings.');return false;} }
   function backupData(){
     const backup={format:'adventure-hub-2-backup',version:1,createdAt:new Date().toISOString(),data:state};
@@ -31,13 +41,19 @@
       return;
     }
     const list=state[page];
-    root.innerHTML='<h1>'+labels[page]+'</h1><p>Save and update your '+(page==='vehicles'?'Land Cruisers and other vehicles':page==='deals'?'potential purchases and trades':'travel points balances')+'.</p><button type="button" class="primary" id="add">+ Add '+(page==='vehicles'?'vehicle':page==='deals'?'deal':'program')+'</button>'+(page==='vehicles'?'<button type="button" id="import-vehicles">Import vehicles from file</button><input type="file" id="vehicle-file" accept=".json,application/json" hidden>':'')+'<div id="editor"></div><div class="grid">'+(list.length?list.map(item=>'<article class="card"><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(page==='rewards'?Number(item.balance||0).toLocaleString('en-US')+' points':money(page==='vehicles'?item.value:item.price))+'</div><div class="muted">'+escapeHTML(item.notes||'No notes')+'</div><div class="actions"><button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>').join(''):'<div class="empty">Nothing saved yet. Use the Add button to create your first record.</div>')+'</div>';
+    if(page==='deals'){
+      const categories=['All','Welder','FJ60 trade','Vintage motorcycle','Land Cruiser','Other'];
+      const shown=dealFilter==='All'?list:list.filter(item=>(item.category||'Other')===dealFilter);
+      root.innerHTML='<h1>Deal Hunter</h1><p>Track purchases and trades, compare prices, and keep seller links in one place.</p><button type="button" class="primary" id="add">+ Add deal</button>'+dealSearches()+'<div class="panel"><label for="deal-filter">Show category</label><select id="deal-filter">'+categories.map(c=>'<option value="'+escapeHTML(c)+'"'+(dealFilter===c?' selected':'')+'>'+escapeHTML(c)+'</option>').join('')+'</select><p class="muted">'+shown.length+' of '+list.length+' saved opportunities</p></div><div id="editor"></div><div class="grid">'+(shown.length?shown.map(dealCard).join(''):'<div class="empty">No deals in this category yet. Add one to start tracking.</div>')+'</div>';
+    } else {
+      root.innerHTML='<h1>'+labels[page]+'</h1><p>Save and update your '+(page==='vehicles'?'Land Cruisers and other vehicles':'travel points balances')+'.</p><button type="button" class="primary" id="add">+ Add '+(page==='vehicles'?'vehicle':'program')+'</button>'+(page==='vehicles'?'<button type="button" id="import-vehicles">Import vehicles from file</button><input type="file" id="vehicle-file" accept=".json,application/json" hidden>':'')+'<div id="editor"></div><div class="grid">'+(list.length?list.map(item=>'<article class="card"><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(page==='rewards'?Number(item.balance||0).toLocaleString('en-US')+' points':money(item.value))+'</div><div class="muted">'+escapeHTML(item.notes||'No notes')+'</div><div class="actions"><button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>').join(''):'<div class="empty">Nothing saved yet. Use the Add button to create your first record.</div>')+'</div>';
+    }
     if(editing!==null) showEditor(editing);
   }
   function showEditor(id){
     editing=id;
     const item=state[page].find(x=>x.id===id)||{};
-    const inputs=fields[page].map(([key,label,type])=>'<label for="f-'+key+'">'+label+'</label>'+(type==='textarea'?'<textarea id="f-'+key+'" name="'+key+'">'+escapeHTML(item[key]||'')+'</textarea>':'<input id="f-'+key+'" name="'+key+'" type="'+type+'" '+(key==='name'?'required ':'')+'value="'+escapeHTML(item[key]??'')+'">')).join('');
+    const inputs=fields[page].map(([key,label,type])=>'<label for="f-'+key+'">'+label+'</label>'+(type==='textarea'?'<textarea id="f-'+key+'" name="'+key+'">'+escapeHTML(item[key]||'')+'</textarea>':type.startsWith('select:')?'<select id="f-'+key+'" name="'+key+'">'+type.slice(7).split('|').map(opt=>'<option value="'+escapeHTML(opt)+'"'+(item[key]===opt?' selected':'')+'>'+escapeHTML(opt)+'</option>').join('')+'</select>':'<input id="f-'+key+'" name="'+key+'" type="'+type+'" '+(key==='name'?'required ':'')+(type==='number'?' min="0" step="any" ':'')+'value="'+escapeHTML(item[key]??'')+'">')).join('');
     document.getElementById('editor').innerHTML='<div class="panel"><h2>'+(id==='new'?'Add record':'Edit record')+'</h2><form id="record-form">'+inputs+'<div class="actions"><button class="primary" type="submit">Save record</button><button type="button" id="cancel">Cancel</button></div></form></div>';
     document.getElementById('f-name').focus();
   }
@@ -52,6 +68,7 @@
     const del=e.target.closest('[data-delete]');if(del){const id=Number(del.dataset.delete);if(confirm('Delete this record?')){state[page]=state[page].filter(x=>x.id!==id);persist();render();}return;}
   });
   document.addEventListener('change', async e=>{
+    if(e.target.id==='deal-filter'){dealFilter=e.target.value;render();return;}
     if(e.target.id==='backup-file'){
       const file=e.target.files&&e.target.files[0];if(!file)return;
       try {
@@ -92,8 +109,11 @@
     e.preventDefault();const data=new FormData(e.target);const record={id:editing==='new'?Date.now():editing};
     fields[page].forEach(([key,,type])=>{record[key]=type==='number'?Number(data.get(key)||0):String(data.get(key)||'').trim();});
     if(!record.name){alert('Please enter a name.');return;}
+    if(page==='deals'&&record.url&&!safeUrl(record.url)){alert('Please enter a valid http or https listing URL.');return;}
+    if(page==='deals'&&(record.price<0||record.estimatedValue<0)){alert('Prices cannot be negative.');return;}
+    const previous=JSON.stringify(state);
     if(editing==='new')state[page].push(record);else state[page]=state[page].map(x=>x.id===editing?record:x);
-    if(persist()){editing=null;render();}
+    if(persist()){editing=null;render();}else{state=JSON.parse(previous);}
   });
   nav('home');
 })();
