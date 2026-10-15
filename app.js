@@ -44,7 +44,7 @@
     if(page==='deals'){
       const categories=['All','Welder','FJ60 trade','Vintage motorcycle','Land Cruiser','Other'];
       const shown=dealFilter==='All'?list:list.filter(item=>(item.category||'Other')===dealFilter);
-      root.innerHTML='<h1>Deal Hunter</h1><p>Track purchases and trades, compare prices, and keep seller links in one place.</p><button type="button" class="primary" id="add">+ Add deal</button>'+dealSearches()+'<div class="panel"><label for="deal-filter">Show category</label><select id="deal-filter">'+categories.map(c=>'<option value="'+escapeHTML(c)+'"'+(dealFilter===c?' selected':'')+'>'+escapeHTML(c)+'</option>').join('')+'</select><p class="muted">'+shown.length+' of '+list.length+' saved opportunities</p></div><div id="editor"></div><div class="grid">'+(shown.length?shown.map(dealCard).join(''):'<div class="empty">No deals in this category yet. Add one to start tracking.</div>')+'</div>';
+      root.innerHTML='<h1>Deal Hunter</h1><p>Track purchases and trades, compare prices, and keep seller links in one place.</p><button type="button" class="primary" id="add">+ Add deal</button> <button type="button" id="import-deals">Import deals from file</button><input type="file" id="deals-file" accept=".json,application/json" hidden>'+dealSearches()+'<div class="panel"><label for="deal-filter">Show category</label><select id="deal-filter">'+categories.map(c=>'<option value="'+escapeHTML(c)+'"'+(dealFilter===c?' selected':'')+'>'+escapeHTML(c)+'</option>').join('')+'</select><p class="muted">'+shown.length+' of '+list.length+' saved opportunities</p></div><div id="editor"></div><div class="grid">'+(shown.length?shown.map(dealCard).join(''):'<div class="empty">No deals in this category yet. Add one to start tracking.</div>')+'</div>';
     } else {
       root.innerHTML='<h1>'+labels[page]+'</h1><p>Save and update your '+(page==='vehicles'?'Land Cruisers and other vehicles':'travel points balances')+'.</p><button type="button" class="primary" id="add">+ Add '+(page==='vehicles'?'vehicle':'program')+'</button>'+(page==='vehicles'?'<button type="button" id="import-vehicles">Import vehicles from file</button><input type="file" id="vehicle-file" accept=".json,application/json" hidden>':'')+'<div id="editor"></div><div class="grid">'+(list.length?list.map(item=>'<article class="card"><h3>'+escapeHTML(item.name)+'</h3><div class="amount">'+(page==='rewards'?Number(item.balance||0).toLocaleString('en-US')+' points':money(item.value))+'</div><div class="muted">'+escapeHTML(item.notes||'No notes')+'</div><div class="actions"><button type="button" data-edit="'+item.id+'">Edit</button><button type="button" data-delete="'+item.id+'">Delete</button></div></article>').join(''):'<div class="empty">Nothing saved yet. Use the Add button to create your first record.</div>')+'</div>';
     }
@@ -61,7 +61,8 @@
     const go=e.target.closest('[data-page],[data-go]');if(go){nav(go.dataset.page||go.dataset.go);return;}
     if(e.target.closest('#backup-data')){backupData();return;}
     if(e.target.closest('#restore-data')){document.getElementById('backup-file').click();return;}
-    if(e.target.closest('#add')){showEditor('new');return;}
+    if(e.target.closest('#add')){showEditor('new');document.getElementById('editor')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
+    if(e.target.closest('#import-deals')){document.getElementById('deals-file').click();return;}
     if(e.target.closest('#import-vehicles')){document.getElementById('vehicle-file').click();return;}
     if(e.target.closest('#cancel')){editing=null;render();return;}
     const edit=e.target.closest('[data-edit]');if(edit){showEditor(Number(edit.dataset.edit));return;}
@@ -69,6 +70,45 @@
   });
   document.addEventListener('change', async e=>{
     if(e.target.id==='deal-filter'){dealFilter=e.target.value;render();return;}
+    if(e.target.id==='deals-file'){
+      const file=e.target.files&&e.target.files[0];if(!file)return;
+      try{
+        const parsed=JSON.parse(await file.text());
+        // Accept {deals:[...]}, or a complete Adventure Hub backup.
+        const incomingList=Array.isArray(parsed.deals)?parsed.deals:(parsed.format==='adventure-hub-2-backup'&&parsed.data&&Array.isArray(parsed.data.deals)?parsed.data.deals:null);
+        if(!incomingList)throw new Error('The JSON file must contain a deals list.');
+        if(incomingList.length>500)throw new Error('Please import no more than 500 deals at once.');
+        const categories=['Welder','FJ60 trade','Vintage motorcycle','Land Cruiser','Other'];
+        const kinds=['For sale','Trade','Both'];
+        const statuses=['Watching','Contacted','Negotiating','Passed','Purchased'];
+        const cleaned=incomingList.map((v,i)=>{
+          if(!v||typeof v!=='object'||Array.isArray(v))throw new Error('Invalid listing at position '+(i+1));
+          const name=String(v.name||'').trim();
+          const url=String(v.url||'').trim();
+          const price=(v.price===''||v.price==null)?0:Number(v.price);
+          const estimatedValue=(v.estimatedValue===''||v.estimatedValue==null)?0:Number(v.estimatedValue);
+          if(!name||name.length>250)throw new Error('Missing or overly long listing title at position '+(i+1));
+          if(!Number.isFinite(price)||price<0||!Number.isFinite(estimatedValue)||estimatedValue<0)throw new Error('Invalid price at position '+(i+1));
+          if(url&&!safeUrl(url))throw new Error('Invalid listing URL at position '+(i+1));
+          return {name,category:categories.includes(v.category)?v.category:'Other',kind:kinds.includes(v.kind)?v.kind:'For sale',price,estimatedValue,location:String(v.location||'').slice(0,250),url, status:statuses.includes(v.status)?v.status:'Watching',notes:String(v.notes||'').slice(0,5000)};
+        });
+        // Prefer listing URLs for duplicate detection; otherwise compare title and location.
+        const fingerprint=v=>v.url&&safeUrl(v.url)?'url:'+safeUrl(v.url).replace(/\/$/,'').toLowerCase():'title:'+v.name.trim().toLowerCase()+'|'+String(v.location||'').trim().toLowerCase();
+        const known=new Set(state.deals.map(fingerprint));
+        const additions=cleaned.filter(v=>{const key=fingerprint(v);if(known.has(key))return false;known.add(key);return true;});
+        const skipped=cleaned.length-additions.length;
+        if(!additions.length){alert('No new deals found. '+skipped+' duplicate(s) skipped; existing records were not changed.');return;}
+        if(!confirm('Import '+additions.length+' new deal(s)? '+skipped+' duplicate(s) will be skipped. Existing records will be kept.'))return;
+        const previous=JSON.stringify(state);
+        const existingIds=new Set(state.deals.map(v=>v.id));
+        for(const v of additions){let id=Date.now()+Math.floor(Math.random()*1000000);while(existingIds.has(id))id++;existingIds.add(id);state.deals.push({id,...v});}
+        if(persist()){editing=null;dealFilter='All';render();alert('Imported '+additions.length+' deal(s). '+skipped+' duplicate(s) skipped.');}
+        else state=JSON.parse(previous);
+      }catch(err){alert('Could not import deals: '+err.message);}
+      finally{e.target.value='';}
+      return;
+    }
+
     if(e.target.id==='backup-file'){
       const file=e.target.files&&e.target.files[0];if(!file)return;
       try {
